@@ -31,10 +31,22 @@ pub fn strip_png(data: &[u8]) -> Result<(Vec<u8>, PngStripResult), Box<dyn Error
             | ((data[pos + 2] as usize) << 8)
             | (data[pos + 3] as usize);
 
-        let chunk_type = &data[pos + 4..pos + 8];
-        let total_chunk_len = 12 + length; // 4 len + 4 type + data + 4 crc
+        // RFC 2083 §3.2: Длина чанка не может превышать (2^31 - 1) байт
+        if length > 0x7FFF_FFFF {
+            return Err("Невалидная длина чанка PNG (превышает предел RFC 2083 2^31 - 1)".into());
+        }
 
-        if pos + total_chunk_len > data.len() {
+        let chunk_type = &data[pos + 4..pos + 8];
+        // Защита от целочисленного переполнения (12 байт = 4 len + 4 type + 4 crc)
+        let total_chunk_len = length
+            .checked_add(12)
+            .ok_or_else(|| "Целочисленное переполнение при вычислении длины чанка PNG")?;
+
+        let chunk_end = pos
+            .checked_add(total_chunk_len)
+            .ok_or_else(|| "Целочисленное переполнение смещения чанка PNG")?;
+
+        if chunk_end > data.len() {
             return Err("Повреждённый чанк PNG (смещение превышает длину файла)".into());
         }
 

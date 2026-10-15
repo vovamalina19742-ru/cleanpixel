@@ -45,7 +45,31 @@ pub fn clean_image_file(
     };
 
     let target_out = output_path.unwrap_or(input_path);
-    fs::write(target_out, cleaned_bytes)?;
+    atomic_write_file(target_out, &cleaned_bytes)?;
 
     Ok(report)
 }
+
+/// Атомарная запись файла: сначала пишем во временный файл в той же директории,
+/// затем выполняем атомарную замену (rename). Это предотвращает повреждение
+/// исходного файла при сбое питания, нехватке места на диске или прерывании процесса.
+fn atomic_write_file(dest: &Path, data: &[u8]) -> Result<(), Box<dyn Error>> {
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("image");
+    let pid = std::process::id();
+    let temp_name = format!(".{}_{}.tmp", file_name, pid);
+    let temp_path = parent.join(temp_name);
+
+    if let Err(e) = fs::write(&temp_path, data) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(e.into());
+    }
+
+    if let Err(e) = fs::rename(&temp_path, dest) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(e.into());
+    }
+
+    Ok(())
+}
+
